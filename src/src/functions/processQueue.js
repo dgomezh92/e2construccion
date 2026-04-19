@@ -4,33 +4,45 @@ const { DefaultAzureCredential } = require('@azure/identity');
 
 // Inicializar cliente Cosmos DB con Managed Identity
 const endpoint = process.env.CosmosDbConnection__accountEndpoint;
+
+if (!endpoint) {
+    console.error('FATAL ERROR: La variable de entorno CosmosDbConnection__accountEndpoint no está definida.');
+}
+
 const client = new CosmosClient({
     endpoint,
     aadCredentials: new DefaultAzureCredential()
 });
 
+// BEST PRACTICE: Inicializar base de datos y contenedor fuera del handler
+// Esto permite reutilizar la conexión en múltiples ejecuciones y ahorra memoria/tiempo.
+const database = client.database('events-db');
+const container = database.container('events');
+
 app.serviceBusQueue('processQueueMessage', {
     connection: 'ServiceBusConnection',
     queueName: 'events-queue',
     handler: async (message, context) => {
-        context.log('Mensaje recibido de Service Bus:', message);
-
+        context.log(`[START] Iniciando procesamiento de mensaje. InvocationId: ${context.invocationId}`);
+        
         try {
-            const database = client.database('events-db');
-            const container = database.container('events');
+            // Enriquecer el documento con más metadatos útiles
+            const documentToInsert = {
+                id: context.invocationId,
+                payload: message,
+                processedAt: new Date().toISOString(),
+                status: 'processed',
+                source: 'ServiceBusQueue'
+            };
             
             // Insertar el mensaje procesado en Cosmos DB
-            const { resource: createdItem } = await container.items.create({
-                id: context.invocationId, // id aleatorio o basado en el invocationId
-                message: message,
-                processedAt: new Date().toISOString()
-            });
+            const { resource: createdItem } = await container.items.create(documentToInsert);
 
-            context.log(`Mensaje guardado en Cosmos DB exitosamente con id: ${createdItem.id}`);
+            context.log(`[SUCCESS] Mensaje guardado en Cosmos DB exitosamente con id: ${createdItem.id}`);
         } catch (error) {
-            context.log.error('Error al guardar en Cosmos DB:', error.message);
-            // Si el handler tira error, Service Bus reintentará el mensaje 
-            // basado en el max_delivery_count (configurado a 3)
+            context.log.error(`[ERROR] Fallo al guardar en Cosmos DB:`, error.message);
+            // Si el handler lanza un error, Service Bus no marcará el mensaje como completado
+            // y lo reintentará según la configuración de max_delivery_count (ej: 3 veces)
             throw error;
         }
     }
