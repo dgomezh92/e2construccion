@@ -149,7 +149,7 @@ resource "azurerm_role_assignment" "sb_receiver" {
   principal_id         = azurerm_linux_function_app.function.identity[0].principal_id
 }
 
-# Para Cosmos DB: Cosmos DB Built-in Data Contributor
+# Para Cosmos DB: Cosmos DB Built-in Data Contributor E2
 resource "azurerm_cosmosdb_sql_role_assignment" "cosmos_contributor" {
   resource_group_name = azurerm_resource_group.rg.name
   account_name        = azurerm_cosmosdb_account.cosmos.name
