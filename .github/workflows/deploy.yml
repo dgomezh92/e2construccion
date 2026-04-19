@@ -1,9 +1,11 @@
 name: 'Terraform Deploy'
 
 on:
-  workflow_dispatch: # ¡ESTO ES LO QUE HABILITA EL BOTÓN MANUAL!
+  workflow_dispatch:
   push:
     branches: [ "main" ]
+    paths:
+      - 'infra/**' # ¡Solo corre si hay cambios en la carpeta infra!
 
 jobs:
   terraform:
@@ -36,5 +38,4 @@ jobs:
       run: terraform plan -var="prefix=e6dg" -var="location=centralus"
 
     - name: Terraform Apply
-      # Como es manual, permitimos que aplique los cambios
       run: terraform apply -auto-approve -var="prefix=e6dg" -var="location=centralus"

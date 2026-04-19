@@ -1,0 +1,39 @@
+name: 'Function App Deploy'
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "main" ]
+    paths:
+      - 'src/**' # ¡Solo corre si hay cambios en la carpeta src!
+
+jobs:
+  build-and-deploy:
+    name: 'Build and Deploy'
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout del código
+      uses: actions/checkout@v4
+
+    - name: Azure Login
+      uses: azure/login@v2
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+    - name: Setup Node
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: Instalar dependencias
+      working-directory: ./src
+      run: npm install
+
+    - name: Desplegar a Azure Functions
+      uses: Azure/functions-action@v1
+      with:
+        # REEMPLAZA ESTO CON EL NOMBRE EXACTO DE TU FUNCTION EN AZURE
+        # Puedes verlo en el portal de Azure, empezará con func-e6dg-
+        app-name: 'func-e6dg-ocru-dev'
+        package: ./src
