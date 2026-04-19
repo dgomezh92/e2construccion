@@ -1,12 +1,18 @@
 const { app } = require('@azure/functions');
 const { ServiceBusClient } = require('@azure/service-bus');
+const { CosmosClient } = require('@azure/cosmos');
 const { DefaultAzureCredential } = require('@azure/identity');
 
-// Obtenemos la URL de tu Service Bus desde las variables de entorno
+// Configuraciones desde variables de entorno
 const fullyQualifiedNamespace = process.env.ServiceBusConnection__fullyQualifiedNamespace;
+const cosmosEndpoint = process.env.CosmosDbConnection__accountEndpoint;
+const credencial = new DefaultAzureCredential();
 
-// Creamos un cliente manual de Service Bus usando tu Managed Identity
-const sbClient = new ServiceBusClient(fullyQualifiedNamespace, new DefaultAzureCredential());
+// Inicializamos clientes globalmente para reutilizar conexiones
+const sbClient = new ServiceBusClient(fullyQualifiedNamespace, credencial);
+const cosmosClient = new CosmosClient({ endpoint: cosmosEndpoint, aadCredentials: credencial });
+const database = cosmosClient.database('events-db');
+const container = database.container('events');
 
 app.http('consumirManual', {
     methods: ['GET', 'POST'],
@@ -15,40 +21,47 @@ app.http('consumirManual', {
         context.log('[START] Petición web para extraer un mensaje de la cola manualmente.');
 
         try {
-            // Nos conectamos a la cola como receptores
             const receiver = sbClient.createReceiver('events-queue');
-            
-            // Intentamos recibir 1 mensaje, esperando un máximo de 5 segundos
             const messages = await receiver.receiveMessages(1, { maxWaitTimeInMs: 5000 });
 
             if (messages.length === 0) {
                 await receiver.close();
                 return { 
                     status: 200, 
-                    body: JSON.stringify({ 
-                        mensaje: "No hay mensajes en la cola.",
-                        nota_importante: "Recuerda que tienes la función automática 'processQueue' activa. Si envías un mensaje, la automática es tan rápida que se lo 'roba' en milisegundos antes de que alcances a correr esta función manual."
-                    }) 
+                    body: JSON.stringify({ mensaje: "No hay mensajes en la cola actualmente." }) 
                 };
             }
 
             const mensajeExtraido = messages[0];
+            const payload = mensajeExtraido.body;
             
-            // Al completarlo, lo borramos de la cola de forma segura
+            // 1. Borramos el mensaje de la cola
             await receiver.completeMessage(mensajeExtraido);
             await receiver.close();
+            context.log('[SUCCESS] Mensaje consumido de Service Bus.');
 
-            context.log('[SUCCESS] Mensaje consumido manualmente de Service Bus.');
+            // 2. Lo guardamos en Cosmos DB para no perder la información
+            const documentToInsert = {
+                id: context.invocationId,
+                payload: payload,
+                processedAt: new Date().toISOString(),
+                status: 'processed_manually',
+                source: 'ServiceBusManualExtraction'
+            };
+            
+            const { resource: createdItem } = await container.items.create(documentToInsert);
+            context.log(`[SUCCESS] Mensaje guardado en Cosmos DB exitosamente con id: ${createdItem.id}`);
 
             return { 
                 status: 200, 
                 body: JSON.stringify({ 
-                    mensaje: "Mensaje extraído y borrado de la cola exitosamente (Modo Manual)",
-                    datos: mensajeExtraido.body
+                    mensaje: "Mensaje extraído de la cola y guardado en Cosmos DB de forma manual.",
+                    cosmos_id: createdItem.id,
+                    datos: payload
                 }) 
             };
         } catch (error) {
-            context.log.error("[ERROR] Fallo al extraer mensaje manual:", error);
+            context.log.error("[ERROR] Fallo en el flujo manual:", error);
             return { 
                 status: 500, 
                 body: JSON.stringify({ error: error.message }) 
