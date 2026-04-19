@@ -13,14 +13,20 @@ provider "azurerm" {
 
 data "azurerm_client_config" "current" {}
 
+resource "random_string" "suffix" {
+  length  = 4
+  special = false
+  upper   = false
+}
+
 resource "azurerm_resource_group" "rg" {
-  name     = "rg-${var.prefix}-entrega2-dev"
+  name     = "rg-${var.prefix}-${random_string.suffix.result}-dev"
   location = var.location
 }
 
 # Storage Account para la Function App
 resource "azurerm_storage_account" "sa" {
-  name                     = "st${var.prefix}funcdev"
+  name                     = "st${var.prefix}${random_string.suffix.result}func"
   resource_group_name      = azurerm_resource_group.rg.name
   location                 = azurerm_resource_group.rg.location
   account_tier             = "Standard"
@@ -29,7 +35,7 @@ resource "azurerm_storage_account" "sa" {
 
 # Application Insights
 resource "azurerm_log_analytics_workspace" "law" {
-  name                = "law-${var.prefix}-dev"
+  name                = "law-${var.prefix}-${random_string.suffix.result}-dev"
   location            = azurerm_resource_group.rg.location
   resource_group_name = azurerm_resource_group.rg.name
   sku                 = "PerGB2018"
@@ -37,7 +43,7 @@ resource "azurerm_log_analytics_workspace" "law" {
 }
 
 resource "azurerm_application_insights" "appinsights" {
-  name                = "appi-${var.prefix}-dev"
+  name                = "appi-${var.prefix}-${random_string.suffix.result}-dev"
   location            = azurerm_resource_group.rg.location
   resource_group_name = azurerm_resource_group.rg.name
   workspace_id        = azurerm_log_analytics_workspace.law.id
@@ -46,7 +52,7 @@ resource "azurerm_application_insights" "appinsights" {
 
 # Service Bus
 resource "azurerm_servicebus_namespace" "sb" {
-  name                = "sb-${var.prefix}-dev"
+  name                = "sb-${var.prefix}-${random_string.suffix.result}-dev"
   location            = azurerm_resource_group.rg.location
   resource_group_name = azurerm_resource_group.rg.name
   sku                 = "Basic"
@@ -63,7 +69,7 @@ resource "azurerm_servicebus_queue" "sbq" {
 
 # Cosmos DB - Modo Serverless
 resource "azurerm_cosmosdb_account" "cosmos" {
-  name                = "cosmos-${var.prefix}-dev"
+  name                = "cosmos-${var.prefix}-${random_string.suffix.result}-dev"
   location            = azurerm_resource_group.rg.location
   resource_group_name = azurerm_resource_group.rg.name
   offer_type          = "Standard"
@@ -101,7 +107,7 @@ resource "azurerm_cosmosdb_sql_container" "container" {
 
 # App Service Plan (Consumption)
 resource "azurerm_service_plan" "plan" {
-  name                = "asp-${var.prefix}-dev"
+  name                = "asp-${var.prefix}-${random_string.suffix.result}-dev"
   location            = azurerm_resource_group.rg.location
   resource_group_name = azurerm_resource_group.rg.name
   os_type             = "Linux"
@@ -110,7 +116,7 @@ resource "azurerm_service_plan" "plan" {
 
 # Function App
 resource "azurerm_linux_function_app" "function" {
-  name                       = "func-${var.prefix}-dev"
+  name                       = "func-${var.prefix}-${random_string.suffix.result}-dev"
   location                   = azurerm_resource_group.rg.location
   resource_group_name        = azurerm_resource_group.rg.name
   service_plan_id            = azurerm_service_plan.plan.id
