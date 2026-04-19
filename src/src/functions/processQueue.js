@@ -19,6 +19,13 @@ const client = new CosmosClient({
 const database = client.database('events-db');
 const container = database.container('events');
 
+/*
+========================================================
+CONSUMIDOR AUTOMÁTICO DESHABILITADO POR PETICIÓN DEL USUARIO
+========================================================
+Si en el futuro quieres que la lectura vuelva a ser automática
+solo quita los comentarios de abajo.
+
 app.serviceBusQueue('processQueueMessage', {
     connection: 'ServiceBusConnection',
     queueName: 'events-queue',
@@ -47,3 +54,4 @@ app.serviceBusQueue('processQueueMessage', {
         }
     }
 });
+*/
