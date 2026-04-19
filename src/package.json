@@ -10,7 +10,8 @@
   "dependencies": {
     "@azure/functions": "^4.0.0",
     "@azure/identity": "^4.0.0",
-    "@azure/cosmos": "^4.0.0"
+    "@azure/cosmos": "^4.0.0",
+    "@azure/service-bus": "^7.9.5"
   },
   "devDependencies": {
     "azure-functions-core-tools": "^4.x"
