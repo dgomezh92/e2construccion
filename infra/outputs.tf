@@ -13,3 +13,11 @@ output "servicebus_namespace" {
 output "cosmosdb_endpoint" {
   value = azurerm_cosmosdb_account.cosmos.endpoint
 }
+
+output "aks_cluster_name" {
+  value = azurerm_kubernetes_cluster.aks.name
+}
+
+output "aks_cluster_fqdn" {
+  value = azurerm_kubernetes_cluster.aks.fqdn
+}

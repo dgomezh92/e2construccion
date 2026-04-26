@@ -1,61 +1,50 @@
-# Serverless & Event-Driven Architecture en Azure
+# Arquitectura Serverless y Dirigida por Eventos en Azure
 
-Este repositorio contiene la implementación de una arquitectura Serverless y dirigida por eventos en Azure, automatizada mediante Terraform y GitHub Actions.
+Este repositorio contiene la implementación de una arquitectura Serverless en Azure utilizando **Azure Functions**, **Service Bus**, y **Cosmos DB**. Todo el despliegue está automatizado bajo las mejores prácticas usando **Terraform** y **GitHub Actions**.
+
+## Flujo de Datos Actual (Desacoplado)
+
+Actualmente, el sistema está configurado para demostrar un flujo de escritura y lectura desacoplado usando colas de mensajería asíncrona:
+
+1. **Escritura en la cola (`httpToBus.js`)**: Una función *HTTP Trigger* recibe un JSON mediante una petición POST (vía web/Postman) y lo encola de forma segura en Azure Service Bus.
+2. **Cola de Retención (`events-queue`)**: El Service Bus retiene los mensajes de forma segura hasta que un consumidor decida procesarlos.
+3. **Lectura Manual y Persistencia (`consumeManual.js`)**: Otra función *HTTP Trigger* que, al ser invocada, se conecta manualmente al Service Bus, extrae un (1) mensaje de la cola, lo borra para que no se duplique, y lo guarda permanentemente en la base de datos Serverless (Cosmos DB).
+4. **Lectura Automática (`processQueue.js`)**: *(Actualmente comentada/deshabilitada por el usuario)*. Si se le quitan los comentarios, esta función reacciona instantáneamente a cualquier mensaje nuevo en la cola y lo procesa hacia Cosmos DB en milisegundos de forma ininterrumpida.
 
 ## Estructura del Proyecto
 
 ```text
 .
 ├── infra/                  # Código de Infraestructura como Código (Terraform)
-│   ├── main.tf             # Definición de recursos (Resource Group, Function App, Service Bus, Cosmos DB, etc.)
-│   ├── variables.tf        # Variables de entrada para Terraform
-│   └── outputs.tf          # Variables de salida (endpoints, nombres de recursos)
-├── .github/workflows/      # Pipelines CI/CD
-│   ├── infra-deploy.yml    # Pipeline para desplegar Terraform automáticamente
-│   └── code-deploy.yml     # Pipeline para desplegar la Azure Function
-└── src/                    # Código fuente de la Azure Function (Node.js v4)
-    ├── host.json           # Configuración global de la función
-    ├── package.json        # Dependencias de Node.js
+│   ├── main.tf             # Recursos: Resource Group, Function App, Service Bus, Cosmos DB, etc.
+│   ├── variables.tf        # Variables de configuración
+│   └── outputs.tf          # Nombres y endpoints generados
+├── .github/workflows/      # Pipelines CI/CD profesional (Flujos separados)
+│   ├── deploy.yml          # Pipeline para Infraestructura (Solo corre al tocar /infra)
+│   └── deploy-app.yml      # Pipeline para la Aplicación (Solo corre al tocar /src)
+└── src/                    # Código de las Azure Functions (Node.js v4)
+    ├── package.json        # Dependencias (@azure/service-bus, @azure/cosmos, etc.)
     └── src/functions/
-        └── processQueue.js # Lógica de la función (Service Bus Trigger)
+        ├── httpToBus.js      # Función HTTP -> Service Bus
+        ├── consumeManual.js  # Función HTTP -> Extrae de Service Bus -> Cosmos DB
+        └── processQueue.js   # Función Service Bus Trigger (Automática - Deshabilitada)
 ```
 
-## Configuración de GitHub Actions (Secrets)
+## Solución de Nombres Globales (Terraform)
+Para evitar errores de "Nombre ya en uso" (muy comunes en Storage Accounts y Cosmos DB), la infraestructura implementa un recurso `random_string` en `main.tf`. Esto asegura que cada despliegue genere un sufijo único (ej. `e6dg-ocru`), garantizando que la infraestructura se despliegue y escale sin colisiones a nivel global.
 
-Para que los despliegues funcionen automáticamente, debes configurar los siguientes **Secrets** en tu repositorio de GitHub (en *Settings > Secrets and variables > Actions*):
-
-1. **Autenticación con Azure (Service Principal)**:
-   Debes crear un Service Principal en Azure con permisos de `Contributor` sobre tu suscripción:
-   ```bash
-   az ad sp create-for-rbac --name "github-actions-sp" --role contributor --scopes /subscriptions/<TU_SUBSCRIPTION_ID> --sdk-auth
-   ```
-   Copia el JSON resultante y guárdalo como un secret llamado `AZURE_CREDENTIALS`.
-   
-2. **Variables de Entorno para Terraform**:
-   Del JSON anterior, extrae los siguientes valores y guárdalos como secretos individuales para Terraform:
-   - `ARM_CLIENT_ID` (corresponde a `clientId`)
-   - `ARM_CLIENT_SECRET` (corresponde a `clientSecret`)
-   - `ARM_SUBSCRIPTION_ID` (corresponde a `subscriptionId`)
-   - `ARM_TENANT_ID` (corresponde a `tenantId`)
-
-## Seguridad y Acceso (Managed Identities)
-
-La arquitectura está diseñada para funcionar **sin connection strings** en el código por razones de seguridad:
+## Seguridad y Acceso (Managed Identities y RBAC)
+La arquitectura está diseñada con los más altos estándares de seguridad en la nube, eliminando por completo el uso de *Connection Strings* visibles en el código:
 - La Azure Function tiene habilitada una **System Assigned Managed Identity**.
-- En Terraform, se le ha asignado el rol `Azure Service Bus Data Receiver` para poder leer de la cola.
-- Igualmente, se le asignó el rol `Cosmos DB Built-in Data Contributor` para poder insertar datos en la base de datos Serverless.
+- Los clientes de base de datos (`CosmosClient` y `ServiceBusClient`) utilizan `DefaultAzureCredential()` del SDK `@azure/identity` para conectarse usando permisos silenciosos de Azure Entra ID.
+- **Asignaciones de Terraform**: 
+  - `Azure Service Bus Data Receiver` (Para leer de la cola de forma automática).
+  - `Cosmos DB Built-in Data Contributor` (Para escribir en la base de datos).
+- **Asignación Manual (Portal/CLI)**: El rol `Propietario de los datos de Azure Service Bus` (Owner/Sender) se asignó manualmente desde el portal de Azure a la Function App para permitirle a la función HTTP escribir nuevos mensajes en la cola.
 
-En el código (`processQueue.js`), utilizamos el SDK `@azure/identity` con `DefaultAzureCredential` para obtener el token en tiempo de ejecución.
+## Cómo Probar el Ciclo Completo (Testing)
 
-## Manejo de Errores y Reintentos (Dead-Letter Queue)
-
-La cola de Service Bus (`events-queue`) está configurada con la propiedad `max_delivery_count = 3`. 
-Esto forma nuestra estrategia de reintentos:
-1. Cuando la Azure Function recibe un mensaje, intenta procesarlo y guardarlo en Cosmos DB.
-2. Si ocurre un error (por ejemplo, base de datos no disponible), la función lanza una excepción.
-3. Azure Service Bus detecta que el mensaje no se completó exitosamente y lo reintenta **automáticamente**.
-4. Si el mensaje falla repetidamente y alcanza el límite de `max_delivery_count` (3 veces), el Service Bus lo mueve automáticamente a la **Dead-Letter Queue (DLQ)**. 
-5. Los mensajes en la DLQ pueden ser analizados posteriormente para identificar por qué fallaron, sin perder la información.
-
-## Despliegue Secuencial
-El pipeline de código (`code-deploy.yml`) utiliza el evento `workflow_run` para ejecutarse automáticamente solo cuando el pipeline de infraestructura (`infra-deploy.yml`) termina exitosamente. Esto asegura que la Function App y la cola siempre existan antes de intentar desplegar el código.
+1. **Enviar un dato:** Obtén la URL de la función `recibirDatosWeb` en el portal y hazle una petición HTTP `POST` enviando cualquier JSON en el cuerpo. Recibirás un `202 Accepted`.
+2. **Verificar la retención:** Ve al portal de Azure, entra a tu Service Bus -> Colas -> `events-queue`. Verás en las gráficas que hay mensajes "Activos" esperando en la cola.
+3. **Consumir y Guardar:** Obtén la URL de la función `consumirManual` y ábrela en tu navegador o mediante un GET en Postman. La respuesta te mostrará el mensaje que extrajo y te confirmará que fue guardado con éxito. Si vas de nuevo al portal del Service Bus, verás que el contador de la cola bajó en 1.
+4. **Verificar la Base de Datos:** Ve a tu Cosmos DB -> Data Explorer -> `events-db` -> `events` -> Items y verás tus datos persistidos permanentemente y listos para ser consumidos por cualquier otra aplicación.

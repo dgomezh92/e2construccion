@@ -75,6 +75,8 @@ resource "azurerm_cosmosdb_account" "cosmos" {
   offer_type          = "Standard"
   kind                = "GlobalDocumentDB"
 
+  enable_automatic_failover = true
+
   capabilities {
     name = "EnableServerless"
   }
@@ -88,6 +90,11 @@ resource "azurerm_cosmosdb_account" "cosmos" {
   geo_location {
     location          = azurerm_resource_group.rg.location
     failover_priority = 0
+  }
+
+  geo_location {
+    location          = "eastus"
+    failover_priority = 1
   }
 }
 
@@ -162,4 +169,42 @@ resource "azurerm_cosmosdb_sql_role_assignment" "cosmos_contributor" {
   role_definition_id  = "${azurerm_cosmosdb_account.cosmos.id}/sqlRoleDefinitions/00000000-0000-0000-0000-000000000002"
   principal_id        = azurerm_linux_function_app.function.identity[0].principal_id
   scope               = azurerm_cosmosdb_account.cosmos.id
+}
+resource "azurerm_kubernetes_cluster" "aks" {
+  name                = "aks-${var.prefix}-${random_string.suffix.result}-dev"
+  location            = azurerm_resource_group.rg.location
+  resource_group_name = azurerm_resource_group.rg.name
+  dns_prefix          = "aks-${var.prefix}-${random_string.suffix.result}"
+
+  default_node_pool {
+    name                = "agentpool"
+    vm_size             = "Standard_B2ms"
+    node_count          = 3
+    min_count           = 3
+    max_count           = 6
+    enable_auto_scaling = true
+    availability_zones  = [1, 2, 3]
+    type                = "VirtualMachineScaleSets"
+  }
+
+  identity {
+    type = "SystemAssigned"
+  }
+
+  addon_profile {
+    oms_agent {
+      enabled                    = true
+      log_analytics_workspace_id = azurerm_log_analytics_workspace.law.id
+    }
+  }
+
+  role_based_access_control {
+    enabled = true
+  }
+
+  network_profile {
+    network_plugin    = "azure"
+    load_balancer_sku = "standard"
+    outbound_type     = "loadBalancer"
+  }
 }

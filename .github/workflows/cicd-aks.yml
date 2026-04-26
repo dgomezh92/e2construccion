@@ -1,0 +1,141 @@
+name: CI/CD Fintech AKS
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/**'
+      - 'infra/**'
+      - '.github/workflows/**'
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: payment-gateway
+  IMAGE_TAG: ${{ github.sha }}
+
+jobs:
+  validate:
+    name: Validación de Código
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Instalar dependencias
+        working-directory: ./src
+        run: npm install
+
+      - name: Ejecutar pruebas unitarias
+        working-directory: ./src
+        run: npm test
+
+      - name: SonarCloud Scan
+        uses: sonarsource/sonarcloud-github-action@v2
+        with:
+          args: >
+            -Dsonar.projectKey=tu-org_fintech-platform
+            -Dsonar.organization=tu-org
+            -Dsonar.host.url=https://sonarcloud.io
+            -Dsonar.login=${{ secrets.SONAR_TOKEN }}
+            -Dsonar.sources=src
+            -Dsonar.tests=src
+            -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info
+
+      - name: Snyk Test
+        uses: snyk/actions/test@v2
+        with:
+          command: test
+          args: --all-projects
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+
+  build-and-push:
+    name: Build y Push de Contenedor
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Login a GitHub Container Registry
+        uses: docker/login-action@v5
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./src
+          file: ./src/Dockerfile
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:cache
+          cache-to: type=inline
+
+  terraform:
+    name: Terraform Infraestructura
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./infra
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Terraform Format Check
+        run: terraform fmt -check
+
+      - name: Terraform Plan
+        run: terraform plan -var="prefix=${{ secrets.RESOURCE_PREFIX }}" -var="location=${{ secrets.AZURE_LOCATION }}"
+
+      - name: Terraform Apply
+        run: terraform apply -auto-approve -var="prefix=${{ secrets.RESOURCE_PREFIX }}" -var="location=${{ secrets.AZURE_LOCATION }}"
+
+  deploy:
+    name: Despliegue AKS Canary
+    needs: terraform
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Conectar a AKS
+        uses: azure/aks-set-context@v3
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+          cluster-name: '${{ secrets.AKS_CLUSTER_NAME }}'
+          resource-group: '${{ secrets.AKS_RESOURCE_GROUP }}'
+
+      - name: Aplicar manifiestos Kubernetes
+        run: |
+          kubectl apply -f ./infra/k8s/namespace.yaml
+          kubectl apply -f ./infra/k8s/service.yaml
+          kubectl apply -f ./infra/k8s/deployment-canary.yaml
+          kubectl set image deployment/payment-gateway payment-gateway=${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} -n fintech

@@ -5,13 +5,15 @@
   "main": "src/functions/*.js",
   "scripts": {
     "start": "func start",
+    "service:start": "node ./src/service/index.js",
     "test": "echo \"No tests yet...\""
   },
   "dependencies": {
     "@azure/functions": "^4.0.0",
     "@azure/identity": "^4.0.0",
     "@azure/cosmos": "^4.0.0",
-    "@azure/service-bus": "^7.9.5"
+    "@azure/service-bus": "^7.9.5",
+    "express": "^4.18.2"
   },
   "devDependencies": {
     "azure-functions-core-tools": "^4.x"
